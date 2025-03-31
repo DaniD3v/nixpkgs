@@ -150,6 +150,7 @@ stdenvNoCC.mkDerivation {
         "application/x-pkt"
         "application/x-pka"
         "application/x-pkz"
+        "x-scheme-handler/pttp"
       ];
     })
   ];
