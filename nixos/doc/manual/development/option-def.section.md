@@ -243,6 +243,54 @@ separate option for user extensions:
 This pattern avoids infinite recursion and provides a clear, explicit way for
 users to extend aggregated configurations.
 
+### What If You Can't Modify the Module?
+
+If you're using a third-party module that has a computed default but doesn't use
+`mkDefault` or provide an extension option, you cannot cleanly extend the default
+value. The module system will replace the default when you assign a value.
+
+In this situation, you have limited options:
+
+1. **Override the entire value**: Accept that you'll replace the default and
+   manually include any values from it that you need. This requires understanding
+   what the default computes.
+
+2. **Use lower-level options**: Instead of overriding the aggregated option,
+   configure the underlying options that feed into it. For example, with disko's
+   `_config` that aggregates device configs, configure the devices themselves
+   rather than trying to modify `_config`.
+
+3. **Request an upstream change**: File an issue or pull request with the module
+   maintainers to add `mkDefault` to their defaults or provide an extension option
+   like `extraConfig`.
+
+Example of working with underlying options:
+
+```nix
+{
+  # Instead of trying to extend disko.devices._config
+  # Work with the device-level options directly
+  disko.devices.disk.main = {
+    device = "/dev/sda";
+    content = {
+      # Configure device-specific settings here
+    };
+  };
+
+  # Then configure your additional filesystems through NixOS options
+  # rather than through disko's _config
+  fileSystems."/" = {
+    device = "/dev/mapper/root";
+    fsType = "ext4";
+  };
+}
+```
+
+Unfortunately, there is no way to reference an option's default value from within
+a configuration assignment without causing infinite recursion. The module system
+evaluates options lazily, and referencing `config.foo` while defining `config.foo`
+creates a circular dependency.
+
 ### When to Use Each Approach
 
 - **Use `mkDefault` in the config section** when:
