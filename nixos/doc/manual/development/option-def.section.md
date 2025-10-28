@@ -181,9 +181,9 @@ For example, when a module computes a configuration based on other module defini
     _config = mkOption {
       internal = true;
       description = "Aggregated configuration from all devices";
-      default = 
+      default =
         # Computed from all devices
-        lib.foldl' lib.recursiveUpdate {} 
+        lib.foldl' lib.recursiveUpdate {}
           (map (dev: dev._config) (lib.attrValues config.devices));
     };
   };
@@ -209,14 +209,20 @@ For example, when a module computes a configuration based on other module defini
 
 ### Solution 2: Making Defaults Extensible
 
-Module authors can make their defaults easier to extend by wrapping them with `mkDefault`.
-This gives user definitions higher priority while still providing a default:
+Module authors can make their defaults easier to extend by using `mkDefault` when
+providing configuration values. This gives user definitions higher priority while
+still providing a default:
 
 ```nix
 {
   options.myOption = mkOption {
     type = types.attrs;
-    default = mkDefault { a = 1; b = 2; };
+    default = {};
+  };
+
+  config.myOption = mkDefault {
+    a = 1;
+    b = 2;
   };
 }
 ```
@@ -229,10 +235,9 @@ This gives user definitions higher priority while still providing a default:
 }
 ```
 
-However, note that `mkDefault` in the option declaration's `default` only helps
-when the option type naturally merges values (like `types.attrs` or `types.attrsOf`).
-For complex computed defaults, Solution 1 with `mkMerge` and `config` reference
-is more reliable.
+However, note that this only works when the option type naturally merges values
+(like `types.attrs` or `types.attrsOf`). For complex computed defaults,
+Solution 1 with `mkMerge` and `config` reference is more reliable.
 
 ### When to Use Each Solution
 
