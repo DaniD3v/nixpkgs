@@ -124,15 +124,15 @@ they were declared in separate modules. This can be done using
 }
 ```
 
-## Extending Default Values {#sec-option-definitions-extending-defaults}
+## Merging with Defaults Using Priorities {#sec-option-definitions-merging-with-defaults}
 
-Sometimes you need to extend an option's default value rather than replace it.
-This is particularly relevant when working with options that have computed defaults,
-such as those that aggregate values from submodules.
+When an option has a default value and you want to extend it rather than replace it,
+you need to understand how the module system's priority system works with different
+option types.
 
-### The Problem
+### The Problem with Simple Assignment
 
-When you define a value for an option, it normally replaces any default value:
+When you define a value for an option, it normally replaces the default:
 
 ```nix
 {
@@ -152,66 +152,11 @@ When you define a value for an option, it normally replaces any default value:
 }
 ```
 
-### Solution 1: Using `mkMerge` with `config`
+### Solution: Using `mkDefault` for Extensible Defaults
 
-To extend the default value, reference the option's computed value using `config`
-and merge it with your additions using `mkMerge`:
-
-```nix
-{
-  config.myOption = mkMerge [
-    config.myOption  # Include the default/computed value
-    { c = 3; }       # Add your own values
-  ];
-  # Result: { a = 1; b = 2; c = 3; }
-}
-```
-
-This pattern is especially useful with options that aggregate values from submodules.
-For example, when a module computes a configuration based on other module definitions:
-
-```nix
-{
-  options = {
-    devices = mkOption {
-      type = types.attrsOf (types.submodule { /* ... */ });
-      default = {};
-    };
-
-    _config = mkOption {
-      internal = true;
-      description = "Aggregated configuration from all devices";
-      default =
-        # Computed from all devices
-        lib.foldl' lib.recursiveUpdate {}
-          (map (dev: dev._config) (lib.attrValues config.devices));
-    };
-  };
-}
-```
-
-```nix
-{
-  # Define some devices
-  devices.disk1 = { /* ... */ };
-  devices.disk2 = { /* ... */ };
-  
-  # Extend the aggregated config without losing device configs
-  _config = mkMerge [
-    config._config  # Preserve computed config from devices
-    {
-      # Add your own configuration
-      fileSystems."/" = { mountPoint = "/"; };
-    }
-  ];
-}
-```
-
-### Solution 2: Making Defaults Extensible
-
-Module authors can make their defaults easier to extend by using `mkDefault` when
-providing configuration values. This gives user definitions higher priority while
-still providing a default:
+Module authors can make their defaults extensible by providing the default value
+in the `config` section using `mkDefault`, rather than in the option's `default`
+attribute. This assigns a priority of 1000, allowing user definitions to merge:
 
 ```nix
 {
@@ -229,24 +174,85 @@ still providing a default:
 
 ```nix
 {
-  # User definitions automatically merge with mkDefault values
+  # User definitions merge with mkDefault defaults for types that support merging
   config.myOption = { c = 3; };
   # Result: { a = 1; b = 2; c = 3; }
 }
 ```
 
-However, note that this only works when the option type naturally merges values
-(like `types.attrs` or `types.attrsOf`). For complex computed defaults,
-Solution 1 with `mkMerge` and `config` reference is more reliable.
+This works because:
+1. Option defaults in the `default` attribute have priority 1500 (`mkOptionDefault`)
+2. Using `mkDefault` in `config` provides priority 1000
+3. User definitions have priority 100 (highest priority)
+4. For attribute set types like `types.attrs`, multiple definitions at the same
+   priority level are merged using `//` (shallow merge)
 
-### When to Use Each Solution
+Note: Using `mkDefault` inside the option's `default` attribute doesn't work as
+expected because the module system automatically wraps the default value with
+`mkOptionDefault`, making any inner priority wrapper ineffective.
 
-- **Use `mkMerge` with `config` reference** when:
-  - You need to extend a computed default value
-  - You're working with submodules that aggregate configurations
-  - The option has a complex default that depends on other options
+### Alternative: Separate Extension Options
 
-- **Use `mkDefault` in option declarations** when:
-  - You're a module author providing a simple default
-  - You want users to easily override parts of the default
-  - The default is static and doesn't depend on other options
+For complex scenarios where defaults are computed from other options (such as
+aggregating values from submodules), the recommended pattern is to provide a
+separate option for user extensions:
+
+```nix
+{
+  options = {
+    devices = mkOption {
+      type = types.attrsOf (types.submodule { /* ... */ });
+      default = {};
+    };
+
+    _config = mkOption {
+      internal = true;
+      description = "Aggregated configuration from all devices";
+      default = {};
+    };
+
+    extraConfig = mkOption {
+      type = types.attrs;
+      default = {};
+      description = "Additional configuration to merge with device configs";
+    };
+  };
+
+  config._config = mkMerge [
+    # Computed from all devices
+    (lib.foldl' lib.recursiveUpdate {}
+      (map (dev: dev._config) (lib.attrValues config.devices)))
+    # User's extra configuration
+    config.extraConfig
+  ];
+}
+```
+
+```nix
+{
+  devices.disk1 = { /* ... */ };
+  devices.disk2 = { /* ... */ };
+  
+  # Extend using the dedicated extension point
+  extraConfig = {
+    fileSystems."/" = { mountPoint = "/"; };
+  };
+}
+```
+
+This pattern avoids infinite recursion and provides a clear, explicit way for
+users to extend aggregated configurations.
+
+### When to Use Each Approach
+
+- **Use `mkDefault` in the config section** when:
+  - You're a module author providing a default that should be easily overridable
+  - You want users to be able to extend the default through merging
+  - The option type supports merging (like `types.attrs`)
+  - The default is static or computed from other options
+
+- **Provide a separate extension option** when:
+  - You're aggregating values from submodules into a computed option
+  - You need a clear, explicit extension point for users
+  - You want to avoid confusion about how to extend the configuration
+  - The aggregation logic is complex
