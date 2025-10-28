@@ -123,3 +123,125 @@ they were declared in separate modules. This can be done using
     ];
 }
 ```
+
+## Extending Default Values {#sec-option-definitions-extending-defaults}
+
+Sometimes you need to extend an option's default value rather than replace it.
+This is particularly relevant when working with options that have computed defaults,
+such as those that aggregate values from submodules.
+
+### The Problem
+
+When you define a value for an option, it normally replaces any default value:
+
+```nix
+{
+  options.myOption = mkOption {
+    type = types.attrs;
+    default = { a = 1; b = 2; };
+  };
+}
+```
+
+```nix
+{
+  # This completely replaces the default
+  config.myOption = { c = 3; };
+  # Result: { c = 3; }
+  # Lost: { a = 1; b = 2; }
+}
+```
+
+### Solution 1: Using `mkMerge` with `config`
+
+To extend the default value, reference the option's computed value using `config`
+and merge it with your additions using `mkMerge`:
+
+```nix
+{
+  config.myOption = mkMerge [
+    config.myOption  # Include the default/computed value
+    { c = 3; }       # Add your own values
+  ];
+  # Result: { a = 1; b = 2; c = 3; }
+}
+```
+
+This pattern is especially useful with options that aggregate values from submodules.
+For example, when a module computes a configuration based on other module definitions:
+
+```nix
+{
+  options = {
+    devices = mkOption {
+      type = types.attrsOf (types.submodule { /* ... */ });
+      default = {};
+    };
+
+    _config = mkOption {
+      internal = true;
+      description = "Aggregated configuration from all devices";
+      default = 
+        # Computed from all devices
+        lib.foldl' lib.recursiveUpdate {} 
+          (map (dev: dev._config) (lib.attrValues config.devices));
+    };
+  };
+}
+```
+
+```nix
+{
+  # Define some devices
+  devices.disk1 = { /* ... */ };
+  devices.disk2 = { /* ... */ };
+  
+  # Extend the aggregated config without losing device configs
+  _config = mkMerge [
+    config._config  # Preserve computed config from devices
+    {
+      # Add your own configuration
+      fileSystems."/" = { mountPoint = "/"; };
+    }
+  ];
+}
+```
+
+### Solution 2: Making Defaults Extensible
+
+Module authors can make their defaults easier to extend by wrapping them with `mkDefault`.
+This gives user definitions higher priority while still providing a default:
+
+```nix
+{
+  options.myOption = mkOption {
+    type = types.attrs;
+    default = mkDefault { a = 1; b = 2; };
+  };
+}
+```
+
+```nix
+{
+  # User definitions automatically merge with mkDefault values
+  config.myOption = { c = 3; };
+  # Result: { a = 1; b = 2; c = 3; }
+}
+```
+
+However, note that `mkDefault` in the option declaration's `default` only helps
+when the option type naturally merges values (like `types.attrs` or `types.attrsOf`).
+For complex computed defaults, Solution 1 with `mkMerge` and `config` reference
+is more reliable.
+
+### When to Use Each Solution
+
+- **Use `mkMerge` with `config` reference** when:
+  - You need to extend a computed default value
+  - You're working with submodules that aggregate configurations
+  - The option has a complex default that depends on other options
+
+- **Use `mkDefault` in option declarations** when:
+  - You're a module author providing a simple default
+  - You want users to easily override parts of the default
+  - The default is static and doesn't depend on other options
